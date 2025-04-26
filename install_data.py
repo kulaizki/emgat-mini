@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Data Installer for ds004496 Dataset
+Data Installer for partial ds004496 Dataset (NOD)
 
-This script downloads and sets up the ds004496 dataset with proper folder structure,
+This script downloads and sets up the partial ds004496 dataset with proper folder structure,
 including the derivatives with fMRIPrep data.
 Usage: python3 install_data.py
 """
