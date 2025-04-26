@@ -1,0 +1,1 @@
+A mini implementation of Discovering Visual Connectivity Patterns from fMRI using Explainable Multi-Graph Attention Networks and the DiFuMo Atlas on the Natural Object Dataset
