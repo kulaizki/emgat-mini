@@ -1,4 +1,5 @@
 /data/
+/output/
 
 # Python cache files
 __pycache__/
@@ -25,6 +26,7 @@ var/
 # Virtual environment
 venv/
 ENV/
+.env
 
 # IDE files
 .idea/

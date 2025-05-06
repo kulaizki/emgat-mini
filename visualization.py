@@ -1,22 +1,22 @@
 import pickle
 import numpy as np
 import pandas as pd
-from nilearn import plotting, datasets, image 
+from nilearn import plotting, datasets, image
 import matplotlib.pyplot as plt
-import networkx as nx 
-from pathlib import Path 
-import os 
-from dotenv import load_dotenv 
-from google import genai 
+import networkx as nx
+from pathlib import Path
+import os
+from dotenv import load_dotenv
+from google import genai
 
 from setup_config import (
     OUTPUT_DIR, ATLAS_DIM, ATLAS_RESOLUTION_MM, NILEARN_CACHE_DIR,
     DIFUMO_LABELS_FILE,
     DIFUMO_LABEL_INDEX_COL,
-    DIFUMO_LABEL_NAME_COL, 
-    DIFUMO_COORD_X_COL,    
-    DIFUMO_COORD_Y_COL,    
-    DIFUMO_COORD_Z_COL     
+    DIFUMO_LABEL_NAME_COL,
+    DIFUMO_COORD_X_COL,
+    DIFUMO_COORD_Y_COL,
+    DIFUMO_COORD_Z_COL
 )
 
 # --- Gemini API Configuration ---
@@ -31,7 +31,7 @@ def configure_gemini():
     try:
         client = genai.Client(api_key=api_key)
         print("  Gemini API client created successfully.")
-        return client 
+        return client
     except Exception as e:
         print(f"  ERROR creating Gemini API client: {e}")
         return None
@@ -63,7 +63,7 @@ def interpret_rois_with_gemini(roi_names, client, model_name="gemini-1.5-pro-lat
         ]
 
         response = client.models.generate_content(
-            model=model_name, 
+            model=model_name,
             contents=prompt
         )
 
@@ -71,15 +71,12 @@ def interpret_rois_with_gemini(roi_names, client, model_name="gemini-1.5-pro-lat
         if hasattr(response, 'text') and response.text:
             print("  Interpretation received from Gemini.")
             return response.text
-        # Check for blocking (adapt based on actual response object structure if needed)
         elif hasattr(response, 'prompt_feedback') and response.prompt_feedback and hasattr(response.prompt_feedback, 'block_reason') and response.prompt_feedback.block_reason:
              reason = response.prompt_feedback.block_reason
              print(f"  ERROR: Gemini request blocked due to {reason}.")
              return f"Interpretation request blocked by safety filters ({reason})."
         else:
-             # Add more robust error checking if necessary based on response object
              print("  ERROR: Received an empty or unexpected response from Gemini.")
-             # print(response) # Uncomment to debug the response object
              return "No interpretation received from Gemini (empty response)."
 
     except Exception as e:
@@ -94,10 +91,10 @@ def load_difumo_metadata():
     print("--- Loading DiFuMo Atlas Metadata ---")
     coords = None
     labels = None
-    atlas_data = None 
-    labels_df = None 
+    atlas_data = None
+    labels_df = None
 
-    # --- Fetch Atlas Data --- 
+    # --- Fetch Atlas Data ---
     try:
         difumo_cache_path = NILEARN_CACHE_DIR / 'difumo'
         difumo_cache_path.mkdir(parents=True, exist_ok=True)
@@ -110,7 +107,7 @@ def load_difumo_metadata():
     except Exception as e:
         print(f"  ERROR: Failed to fetch DiFuMo atlas data: {e}")
 
-    # --- Attempt 1: Direct Coordinate Access from fetched data --- 
+    # --- Attempt 1: Direct Coordinate Access ---
     if atlas_data and hasattr(atlas_data, 'region_coords') and atlas_data.region_coords is not None:
         try:
             coords_arr = np.array(atlas_data.region_coords)
@@ -138,29 +135,35 @@ def load_difumo_metadata():
               print(f"  Warning: Failed to process coordinates from atlas_data.labels: {e}")
               coords = None
 
+    # --- Attempt 2: find_parcellation_cut_coords ---
     if coords is None and atlas_data and hasattr(atlas_data, 'maps') and atlas_data.maps is not None:
         print("  Attempting coordinate extraction using find_parcellation_cut_coords...")
         try:
-            # Try creating a max probability map first, as input should be 3D label map
             maps_4d_img = image.load_img(atlas_data.maps)
-            # Get the index of the max probability for each voxel across components
             max_prob_map_data = np.argmax(maps_4d_img.get_fdata(), axis=-1)
-            # Create a 3D image from these labels (add 1 to avoid 0 label if needed, depends on function needs)
             max_prob_img = image.new_img_like(maps_4d_img, max_prob_map_data + 1, affine=maps_4d_img.affine)
-            # Ensure the new image is 3D
+
             if max_prob_img.get_fdata().ndim == 3:
-                 coords_nifti = plotting.find_parcellation_cut_coords(max_prob_img) # Use the derived 3D label image
-                 if coords_nifti is not None and coords_nifti.shape == (ATLAS_DIM, 3):
-                     coords = coords_nifti
-                     print(f"  Successfully loaded coordinates ({coords.shape}) using find_parcellation_cut_coords on max prob map.")
+                 coords_nifti = plotting.find_parcellation_cut_coords(max_prob_img)
+                 if coords_nifti is not None and coords_nifti.shape[1] == 3:
+                     if coords_nifti.shape[0] == ATLAS_DIM:
+                         coords = coords_nifti
+                         print(f"  Successfully loaded coordinates ({coords.shape}) using find_parcellation_cut_coords on max prob map.")
+                     elif coords_nifti.shape[0] == ATLAS_DIM - 1: # Handle the off-by-one case
+                         print(f"  Warning: find_parcellation_cut_coords returned {coords_nifti.shape[0]} coordinates (expected {ATLAS_DIM}). Padding with one [0,0,0] entry.")
+                         coords = np.vstack([coords_nifti, np.zeros((1, 3))])
+                         print(f"  Successfully loaded and padded coordinates ({coords.shape}).")
+                     else:
+                          print(f"  Warning: find_parcellation_cut_coords returned unexpected shape: {coords_nifti.shape}. Expected ({ATLAS_DIM} or {ATLAS_DIM-1}, 3).")
                  else:
-                     print(f"  Warning: find_parcellation_cut_coords returned unexpected shape: {coords_nifti.shape if coords_nifti is not None else 'None'}")
+                     print(f"  Warning: find_parcellation_cut_coords returned None or incorrect column count ({coords_nifti.shape if coords_nifti is not None else 'None'}).")
             else:
                  print("  Warning: Derived max probability map is not 3D. Cannot use find_parcellation_cut_coords.")
         except Exception as e:
             print(f"  Warning: Failed during find_parcellation_cut_coords approach: {e}")
-            coords = None 
+            coords = None
 
+    # --- Attempt 3: Load from CSV ---
     if coords is None and DIFUMO_LABELS_FILE and DIFUMO_COORD_X_COL and DIFUMO_COORD_Y_COL and DIFUMO_COORD_Z_COL:
         print(f"  Attempting to load coordinates from CSV: {DIFUMO_LABELS_FILE}")
         try:
@@ -202,14 +205,13 @@ def load_difumo_metadata():
     if coords is None:
          print("  ERROR: Failed to obtain coordinates using all methods. Visualization will be limited.")
 
-    # --- Load Labels (Prioritize direct access, then CSV) --- 
+    # --- Load Labels ---
     labels = [f"Node {i}" for i in range(ATLAS_DIM)] # Default
     labels_loaded_source = "default"
-    
-    # Attempt 1: Direct from atlas_data.labels (often contains names)
+
+    # Attempt 1: Direct from atlas_data.labels
     if atlas_data and hasattr(atlas_data, 'labels') and isinstance(atlas_data.labels, list) and len(atlas_data.labels) > 0:
         try:
-            # Check if labels is list of strings or list of dicts
             if isinstance(atlas_data.labels[0], str):
                  if len(atlas_data.labels) == ATLAS_DIM:
                      labels = list(atlas_data.labels)
@@ -217,7 +219,6 @@ def load_difumo_metadata():
                  else:
                       print(f"  Warning: Length of atlas_data.labels list ({len(atlas_data.labels)}) != ATLAS_DIM.")
             elif isinstance(atlas_data.labels[0], dict) and 'name' in atlas_data.labels[0]:
-                 # Assuming list of dicts with a 'name' key
                  labels_list = [d.get('name', f'Node {i}') for i, d in enumerate(atlas_data.labels)]
                  if len(labels_list) == ATLAS_DIM:
                       labels = labels_list
@@ -229,10 +230,10 @@ def load_difumo_metadata():
 
         except Exception as e:
             print(f"  Warning: Error processing labels from atlas_data.labels: {e}")
-            labels = [f"Node {i}" for i in range(ATLAS_DIM)] # Reset to default on error
+            labels = [f"Node {i}" for i in range(ATLAS_DIM)] # Reset to default
             labels_loaded_source = "default"
 
-    # Attempt 2: Load from CSV if direct access failed or wasn't perfect, and CSV is configured
+    # Attempt 2: Load from CSV
     if (labels_loaded_source == "default" or len(labels) != ATLAS_DIM) and DIFUMO_LABELS_FILE and DIFUMO_LABEL_NAME_COL:
         print(f"  Attempting to load labels from CSV: {DIFUMO_LABELS_FILE}")
         try:
@@ -242,38 +243,45 @@ def load_difumo_metadata():
                     if pd.api.types.is_numeric_dtype(labels_df[DIFUMO_LABEL_INDEX_COL]) and labels_df[DIFUMO_LABEL_INDEX_COL].iloc[0] == 1:
                         labels_df[DIFUMO_LABEL_INDEX_COL] = labels_df[DIFUMO_LABEL_INDEX_COL] - 1
                     labels_df = labels_df.sort_values(by=DIFUMO_LABEL_INDEX_COL).set_index(DIFUMO_LABEL_INDEX_COL)
-                    labels_df = labels_df.reindex(range(ATLAS_DIM))
+                    labels_df = labels_df.reindex(range(ATLAS_DIM)) # Ensure it has ATLAS_DIM rows
+                else:
+                    # If no index col, assume order is correct but pad if needed
+                    if len(labels_df) < ATLAS_DIM:
+                           padding = pd.DataFrame(index=range(len(labels_df), ATLAS_DIM), columns=labels_df.columns)
+                           labels_df = pd.concat([labels_df, padding], ignore_index=False)
+                           labels_df.index = range(ATLAS_DIM) # Make sure index is 0 to ATLAS_DIM-1
 
-            if DIFUMO_LABEL_NAME_COL in labels_df.columns:
-                 if len(labels_df) >= ATLAS_DIM:
-                      labels_series = labels_df.loc[range(ATLAS_DIM), DIFUMO_LABEL_NAME_COL]
-                      labels = labels_series.fillna('Unknown').tolist()
-                      labels_loaded_source = "CSV"
-                 else:
-                      print(f"  Warning: CSV has fewer rows ({len(labels_df)}) than ATLAS_DIM. Padding labels.")
-                      labels_series = labels_df[DIFUMO_LABEL_NAME_COL]
-                      loaded_labels = labels_series.fillna('Unknown').tolist()
-                      labels = loaded_labels + [f"Node {i}" for i in range(len(loaded_labels), ATLAS_DIM)]
-                      labels_loaded_source = "CSV (padded)"
-
-                 if len(labels) != ATLAS_DIM:
-                     print(f"  Warning: Final label count ({len(labels)}) doesn't match ATLAS_DIM ({ATLAS_DIM}). Truncating/padding.")
-                     labels = (labels + [f"Node {i}" for i in range(len(labels), ATLAS_DIM)])[:ATLAS_DIM]
-            else:
-                 print(f"  Warning: Label column '{DIFUMO_LABEL_NAME_COL}' not found in CSV. Keeping previous labels ('{labels_loaded_source}').")
+            if DIFUMO_LABEL_NAME_COL in labels_df.columns and len(labels_df) >= ATLAS_DIM:
+                labels_series = labels_df.loc[range(ATLAS_DIM), DIFUMO_LABEL_NAME_COL]
+                if labels_series.isnull().any():
+                     print("    Warning: NaNs found in label column. Filling with 'Unknown Node'.")
+                     labels_series = labels_series.fillna(f'Unknown Node')
+                labels = labels_series.tolist()
+                labels_loaded_source = "csv"
+                print(f"  Successfully loaded labels ({len(labels)}) from CSV.")
+            elif DIFUMO_LABEL_NAME_COL not in labels_df.columns:
+                 print("   Label name column not found in CSV.")
+            else: # len(labels_df) < ATLAS_DIM
+                 print(f"   CSV processing resulted in fewer rows ({len(labels_df)}) than ATLAS_DIM ({ATLAS_DIM}) for labels.")
 
         except FileNotFoundError:
-            print(f"  WARNING: Labels file not found at {DIFUMO_LABELS_FILE}. Keeping previous labels ('{labels_loaded_source}').")
+            print(f"  ERROR: Labels file not found at {DIFUMO_LABELS_FILE}.")
         except Exception as e:
-            print(f"  WARNING: Error reading labels file {DIFUMO_LABELS_FILE}: {e}. Keeping previous labels ('{labels_loaded_source}').")
+            print(f"  ERROR loading labels from CSV {DIFUMO_LABELS_FILE}: {e}")
+            if labels_loaded_source != "default" and len(labels) != ATLAS_DIM: # Revert to default if CSV failed badly
+                 labels = [f"Node {i}" for i in range(ATLAS_DIM)]
+                 labels_loaded_source = "default"
 
-    print(f"  Final labels loaded from: {labels_loaded_source}")
+    print(f"--- Finished loading metadata. Using labels from: {labels_loaded_source} ---")
+    if coords is None:
+         print("  WARNING: Coordinates are missing. Connectome/Node plots will be disabled.")
+    elif coords.shape[0] != ATLAS_DIM:
+         print(f"  WARNING: Final coordinate array shape {coords.shape} does not match ATLAS_DIM {ATLAS_DIM}. Plots may be incorrect.")
     if len(labels) != ATLAS_DIM:
-        print(f"  FINAL WARNING: Number of labels ({len(labels)}) does not match ATLAS_DIM ({ATLAS_DIM})!")
-
+         print(f"  WARNING: Final labels list length ({len(labels)}) does not match ATLAS_DIM {ATLAS_DIM}. Plot labels may be incorrect.")
     return coords, labels
 
-# --- Helper: Calculate and Print Top ROIs --- 
+# --- Helper: Calculate and Print Top ROIs ---
 def print_top_connected_rois(graph_id, edge_index, edge_mask, node_labels, title_prefix, top_n=5):
     """Calculates node importance by summing absolute edge mask values and prints top N ROIs.
     DEPRECATED: Use calculate_node_importance and print_overall_top_rois instead.
@@ -361,49 +369,87 @@ def calculate_node_importance(edge_index, edge_mask, num_nodes):
         return None
 
 def print_overall_top_rois(aggregated_importance, node_labels, title_prefix, client, top_n=5):
-    """Prints the top N ROIs and fetches Gemini interpretation for GNNExplainer ROIs."""
+    """
+    Prints the top N ROIs, saves details and interpretation to Markdown for GNNExplainer,
+    and returns top indices/scores for GNNExplainer.
+    """
     print(f"\n--- Overall Top {top_n} ROIs ({title_prefix}) ---")
     if aggregated_importance is None or node_labels is None:
         print("  Skipping: Missing aggregated scores or labels.")
-        return
-    
+        return None, None # Return None for indices and scores
+
     num_nodes = len(node_labels)
     if len(aggregated_importance) != num_nodes:
         print(f"  Skipping: Aggregated scores length ({len(aggregated_importance)}) doesn't match labels length ({num_nodes}).")
-        return
+        return None, None # Return None for indices and scores
 
     if aggregated_importance.sum() < 1e-9:
         print("  All aggregated node importances are zero.")
-        return
+        return None, None # Return None for indices and scores
 
     top_roi_names = []
+    top_indices = []
+    top_scores = []
+    markdown_output_lines = []
+    is_gnn_explainer = "GNNExplainer" in title_prefix
+
     try:
+        # Find top N indices and their scores
         top_indices_unsorted = np.argpartition(aggregated_importance, -top_n)[-top_n:]
-        top_indices = top_indices_unsorted[np.argsort(aggregated_importance[top_indices_unsorted])][::-1]
+        sorted_order = np.argsort(aggregated_importance[top_indices_unsorted])[::-1]
+        top_indices = top_indices_unsorted[sorted_order]
+        top_scores = aggregated_importance[top_indices]
 
         print(f"  Top {top_n} ROIs by aggregated summed absolute edge importance:")
+        if is_gnn_explainer:
+             markdown_output_lines.append(f"# Top {top_n} GNNExplainer ROIs (Aggregated)")
+             markdown_output_lines.append("Based on aggregated summed absolute edge importance scores across all graphs.")
+             markdown_output_lines.append("\n**Top ROIs:**\n")
+
         for i, idx in enumerate(top_indices):
             if 0 <= idx < len(node_labels):
                 label = node_labels[idx]
-                score = aggregated_importance[idx]
+                score = top_scores[i] # Use the sorted score
                 print(f"    {i+1}. Index {idx}: '{label}' (Score: {score:.4f})")
                 top_roi_names.append(label)
+                if is_gnn_explainer:
+                     markdown_output_lines.append(f"{i+1}. **{label}** (Index: {idx}, Score: {score:.4f})")
             else:
                 print(f"    {i+1}. Index {idx}: Error - Index out of bounds for labels.")
                 top_roi_names.append(f"Invalid Index {idx}")
-                
-        # --- Call Gemini for Interpretation (only for GNNExplainer results currently) ---
-        if client and "GNNExplainer" in title_prefix:
-             # Pass the client object now
+                if is_gnn_explainer:
+                     markdown_output_lines.append(f"{i+1}. **Invalid Index {idx}** (Score: N/A)")
+
+        # --- Call Gemini & Append Interpretation to Markdown (only for GNNExplainer) ---
+        if client and is_gnn_explainer:
              interpretation = interpret_rois_with_gemini(top_roi_names, client)
              print("\n--- Gemini Interpretation of Top 5 GNNExplainer ROIs ---")
-             print(interpretation)
-        elif not client and "GNNExplainer" in title_prefix:
+             print(interpretation) # Still print to console for quick view
+             markdown_output_lines.append("\n## Gemini Interpretation\n")
+             markdown_output_lines.append(interpretation)
+        elif not client and is_gnn_explainer:
              print("\n(Gemini interpretation skipped: API client not available)")
-             
+             markdown_output_lines.append("\n*Gemini interpretation skipped: API client not available.*")
+
+        # --- Save Markdown File (only for GNNExplainer) ---
+        if is_gnn_explainer:
+            md_save_path = OUTPUT_DIR / "top_5_gnn_interpretation.md"
+            try:
+                with open(md_save_path, 'w') as f:
+                    f.write("\n".join(markdown_output_lines))
+                print(f"  Saved Top 5 GNNExplainer ROIs and interpretation to: {md_save_path.name}")
+            except Exception as e_write:
+                print(f"  ERROR writing markdown file {md_save_path}: {e_write}")
+
+        # Return indices and scores only if it's GNNExplainer for the new plot
+        if is_gnn_explainer:
+             return top_indices, top_scores
+        else:
+             return None, None # Return None for non-GNNExplainer calls
+
     except Exception as e:
         print(f"  ERROR determining or printing overall top ROIs: {e}")
-
+        return None, None # Return None on error
 
 # --- Plotting Functions (remain largely the same, rely on valid coords/labels input) ---
 
@@ -419,7 +465,6 @@ def plot_explanation_connectome(graph_id, edge_index, edge_mask, coords, node_la
     if edge_index is None or edge_index.shape[1] != len(edge_mask):
          print(f"    Skipping connectome plot for {graph_id}: Edge index shape mismatch or missing.")
          return
-
 
     # Create adjacency matrix from edge mask
     num_nodes = coords.shape[0]
@@ -469,7 +514,6 @@ def plot_explanation_connectome(graph_id, edge_index, edge_mask, coords, node_la
             # Should not happen if kept_edges > 0, but defensive check
              print("    Warning: No edge weights found for top_n thresholding.")
 
-
     # Node plotting arguments
     node_kwargs = {'node_size': 15, 'node_color': 'black'}
 
@@ -498,7 +542,6 @@ def plot_explanation_connectome(graph_id, edge_index, edge_mask, coords, node_la
 
     except Exception as e:
         print(f"    ERROR plotting connectome for {graph_id}: {e}")
-
 
 def plot_node_importance(graph_id, node_mask, coords, node_labels=None, threshold=0.5, title_prefix="GNNExplainer"):
     """Plots important nodes on a brain map based on node mask."""
@@ -565,15 +608,83 @@ def plot_node_importance(graph_id, node_mask, coords, node_labels=None, threshol
     except Exception as e:
         print(f"    ERROR plotting node importance for {graph_id}: {e}")
 
+# --- New Function: Plot Only Top Aggregated Nodes ---
+def plot_top_aggregated_nodes(top_indices, top_scores, coords, node_labels, title_prefix, output_filename="top_5_aggregated_nodes.png"):
+    """Plots only the specified top nodes, sized and colored by their aggregated scores."""
+    print(f"\n--- Plotting Top {len(top_indices)} Aggregated Nodes ({title_prefix}) ---")
+    if top_indices is None or top_scores is None or len(top_indices) == 0:
+        print("  Skipping top nodes plot: No indices or scores provided.")
+        return
+    if coords is None:
+        print("  Skipping top nodes plot: Missing coordinates.")
+        return
+    if node_labels is None:
+        print("  Warning: Missing node labels for top nodes plot.")
+        labels_for_plot = [f"Node {idx}" for idx in top_indices]
+    else:
+        try:
+            labels_for_plot = [node_labels[i] for i in top_indices]
+        except IndexError:
+             print("    Warning: Index error retrieving node labels for top nodes plot. Using default indices.")
+             labels_for_plot = [f"Node {i}" for i in top_indices]
+        except Exception as e:
+             print(f"    Warning: Error retrieving node labels for top nodes plot: {e}. Using default indices.")
+             labels_for_plot = [f"Node {i}" for i in top_indices]
+
+    top_coords = coords[top_indices]
+
+    # Normalize scores for better visualization scaling (e.g., size, color intensity)
+    # Handle case where all scores might be zero (already checked before calling, but safety)
+    min_score = top_scores.min()
+    max_score = top_scores.max()
+    if max_score > 1e-9:
+        # Simple min-max scaling to 0-1 for color/size base
+        scores_norm = (top_scores - min_score) / (max_score - min_score + 1e-9) # Add epsilon for stability
+        node_sizes = scores_norm * 45 + 5 # Scale size: min 5, max 50
+        node_values = top_scores # Use original scores for color map range
+        vmin, vmax = min_score, max_score
+    else:
+        node_sizes = 15 # Default size if scores are zero/tiny
+        node_values = top_scores
+        vmin, vmax = 0, 1 # Default range
+
+    try:
+        fig_title = f"Top {len(top_indices)} {title_prefix} ROIs (Aggregated)"
+        save_path = OUTPUT_DIR / output_filename
+
+        plotting.plot_markers(
+            node_values=node_values,
+            node_coords=top_coords,
+            node_labels=labels_for_plot,
+            node_size=node_sizes,
+            node_cmap='viridis', # Or choose another cmap
+            node_vmin=vmin,
+            node_vmax=vmax,
+            title=fig_title,
+            colorbar=True,
+            display_mode='lzry',
+            output_file=str(save_path),
+            annotate=True # Show labels
+        )
+        plt.close()
+        print(f"  Saved top aggregated nodes plot to: {save_path.name}")
+
+    except Exception as e:
+        print(f"  ERROR plotting top aggregated nodes: {e}")
 
 # --- Main Execution Function ---
 def run_visualization(attention_results, gnn_results):
-    """Generates visualizations, aggregates importance, prints overall top ROIs, and gets interpretation."""
+    """
+    Visualizes attention weights and GNNExplainer results for trial-level category classification.
+    Generates connectome plots, node importance plots for a subset of trials,
+    and identifies top ROIs based on average GNNExplainer importance across visualized trials.
+    Queries Gemini for interpretation of the top ROIs.
+    """
     print("--- Running Visualization Pipeline (Step 15) ---")
 
-    # --- Configure Gemini API --- 
+    # --- Configure Gemini API ---
     print("--- Configuring External APIs ---")
-    gemini_client = configure_gemini() 
+    gemini_client = configure_gemini()
     # --- End Configure API ---
 
     # Load coordinates and labels
@@ -584,7 +695,7 @@ def run_visualization(attention_results, gnn_results):
     if difumo_labels is None or len(difumo_labels) != ATLAS_DIM:
          print("  Warning: Labels failed to load correctly. Top ROI names might be incorrect.")
          if difumo_labels is None:
-              difumo_labels = [f"Node {i}" for i in range(ATLAS_DIM)] 
+              difumo_labels = [f"Node {i}" for i in range(ATLAS_DIM)]
 
     num_nodes = len(difumo_labels)
     aggregated_gnn_importance = np.zeros(num_nodes)
@@ -679,15 +790,29 @@ def run_visualization(attention_results, gnn_results):
     else:
         print("  No Attention Analysis results found to visualize.")
 
-    # --- Print Overall Top ROIs & Get Interpretation --- 
+    # --- Print Overall Top ROIs & Get Interpretation ---
+    top_gnn_indices = None
+    top_gnn_scores = None
     if gnn_graphs_processed > 0:
-        # Pass the client object
-        print_overall_top_rois(aggregated_gnn_importance, difumo_labels, "GNNExplainer (Aggregated)", gemini_client, top_n=5)
+        # Pass the client object, get back indices/scores
+        top_gnn_indices, top_gnn_scores = print_overall_top_rois(
+            aggregated_gnn_importance, difumo_labels, "GNNExplainer (Aggregated)", gemini_client, top_n=5
+        )
+        # Plot the dedicated top 5 GNN figure if we got indices
+        if top_gnn_indices is not None:
+            plot_top_aggregated_nodes(
+                top_indices=top_gnn_indices,
+                top_scores=top_gnn_scores,
+                coords=difumo_coords,
+                node_labels=difumo_labels,
+                title_prefix="GNNExplainer",
+                output_filename="top_5_gnn_aggregated_nodes.png"
+            )
     else:
         print("\nNo GNNExplainer graphs processed for overall importance calculation.")
 
     if attn_graphs_processed > 0:
-        # Pass None for client if interpretation not desired for Attention
+        # Pass None for client, don't expect indices/scores back for plotting this one
         print_overall_top_rois(aggregated_attn_importance, difumo_labels, "Attention (Aggregated)", None, top_n=5)
     else:
         print("\nNo Attention graphs processed for overall importance calculation.")

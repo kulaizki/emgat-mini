@@ -1,11 +1,25 @@
+# Filename: setup_config.py
+# Location: <workspace_root>/setup_config.py
+# Description: Defines configuration variables and parameters for the PoC.
+# Changes:
+#   - Updated DiFuMo Labels/Coordinates CSV Configuration section with
+#     correct column names based on user-provided CSV header.
+#   - Set coordinate columns to None as they are not in the CSV.
 
 import os
+# import glob # Not used directly
+# import re # Not used directly
+# import pickle # Not used directly
 from pathlib import Path
 import warnings
-import random 
+import random # Added for seed setting
 
 import numpy as np
 import pandas as pd
+# Note: Importing heavy libraries like nibabel, nilearn, torch here might slow down
+# simple script executions that only need config values. Consider importing them
+# only within the modules that strictly need them if startup time becomes an issue.
+# However, for simplicity in the PoC, keeping them here is often acceptable.
 import nibabel as nib
 from nilearn import image, plotting, datasets, signal
 from nilearn.maskers import NiftiMapsMasker
@@ -16,8 +30,11 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 import torch
 import torch.nn as nn
 import torch.optim as optim
+# Note: Importing specific PyG items here might be okay if used frequently across modules
+# or moved to individual modules if preferred.
 from torch_geometric.data import Data, Dataset, DataLoader
 from torch_geometric.nn import GATConv, global_mean_pool
+# from torch_geometric.explain import GNNExplainer # Moved to explainability.py potentially
 import torch.nn.functional as F
 
 import matplotlib.pyplot as plt
@@ -30,102 +47,81 @@ except:
 FMRIPREP_DIR = Path("./data/ds004496/derivatives/fmriprep")
 BIDS_RAW_DIR = Path("./data/ds004496/raw")
 OUTPUT_DIR = Path("./output")
-SYNSET_WORDS_FILE = Path("./data/ds004496/synset_words.txt")
+SYNSET_WORDS_FILE = Path("./data/ds004496/synset_words.txt") # Needed only for original category mapping
 
 # --- Atlas Configuration ---
 ATLAS_DIM = 64
 ATLAS_NAME = f"difumo{ATLAS_DIM}"
 ATLAS_RESOLUTION_MM = 2
 
-# ==============================================================
-# !!! ADDED/UPDATED SECTION for DiFuMo CSV Configuration !!!
-# ==============================================================
+# --- DiFuMo Labels/Coordinates CSV Configuration ---
 # Path to the CSV file containing labels and potentially coordinates
-DIFUMO_LABELS_FILE = Path("./labels_64_dictionary.csv") # Ensure this path is correct
+DIFUMO_LABELS_FILE = Path("./labels_64_dictionary.csv") # Confirmed path
 
-# --- Column Names in DIFUMO_LABELS_FILE (!!! ADJUST THESE !!!) ---
-# Set these based on the *actual* header names in your CSV file.
+# --- Column Names in DIFUMO_LABELS_FILE (Updated based on user CSV) ---
 
-# Name of the column containing the component index (e.g., 0-63 or 1-64)
-# Example: If your column is named 'Component_ID', use that.
-# Set to None if your CSV doesn't have an index column or you don't need to sort/index by it.
-DIFUMO_LABEL_INDEX_COL = "Component" # <-- MODIFY THIS if your column name is different, or set to None
+# Name of the column containing the component index (0-based or 1-based)
+# Found 'Component' in user CSV (appears 1-based)
+DIFUMO_LABEL_INDEX_COL = "Component"
 
 # Name of the column containing the human-readable region name
-# Example: If your column is named 'RegionName', use that.
-DIFUMO_LABEL_NAME_COL = "Difumo_names" # <-- MODIFY THIS if your column name is different
+# Found 'Difumo_names' in user CSV
+DIFUMO_LABEL_NAME_COL = "Difumo_names"
 
 # Names of columns containing MNI coordinates.
-# Set these ONLY if you want to potentially load coordinates from this CSV
-# as a fallback if the nilearn method fails.
-# Set to None if your CSV doesn't have coordinate columns.
-DIFUMO_COORD_X_COL = "MNI_X" # <-- MODIFY THIS if your column name is different, or set to None
-DIFUMO_COORD_Y_COL = "MNI_Y" # <-- MODIFY THIS if your column name is different, or set to None
-DIFUMO_COORD_Z_COL = "MNI_Z" # <-- MODIFY THIS if your column name is different, or set to None
-# ==============================================================
-# !!! END OF SECTION TO ADD/UPDATE !!!
-# ==============================================================
+# Set to None because coordinate columns were NOT found in user CSV data.
+DIFUMO_COORD_X_COL = None
+DIFUMO_COORD_Y_COL = None
+DIFUMO_COORD_Z_COL = None
+# --- End DiFuMo CSV Configuration ---
 
-
-# --- Data Selection ---
+# --- Data Selection (Run-Level Analysis) ---
 SUBJECTS = ['01', '02']
-SESSIONS = ['imagenet01', 'imagenet02']
+SESSIONS = ['imagenet01', 'imagenet02', 'imagenet03', 'imagenet04'] 
 TASK_NAME = 'imagenet'
 N_RUNS_PER_SESSION = 10 # Number of runs per session to process
 
 # --- fMRI Processing Parameters ---
 TR = 2.0 # Repetition Time in seconds
-HEMODYNAMIC_DELAY_TR = 2 # Delay in TRs (e.g., 4s delay / 2s TR = 2 TRs)
+HEMODYNAMIC_DELAY_TR = 2 # Not used in run-level analysis, but kept for reference
 CONFOUNDS_TO_USE = [
     'trans_x', 'trans_y', 'trans_z', 'rot_x', 'rot_y', 'rot_z',
     'trans_x_derivative1', 'trans_y_derivative1', 'trans_z_derivative1',
     'rot_x_derivative1', 'rot_y_derivative1', 'rot_z_derivative1',
     'csf', 'white_matter',
-    'cosine00', 'cosine01', 'cosine02', 'cosine03', # Example high-pass filter confounds from fmriprep
-    # Add other confounds like 'global_signal' or FD if desired, e.g., 'framewise_displacement'
+    'cosine00', 'cosine01', 'cosine02', 'cosine03',
 ]
-FD_THRESHOLD = 0.5 # Framewise displacement threshold (not currently used in cleaning, but defined)
+FD_THRESHOLD = 0.5 # Not currently used in cleaning logic
 CLEAN_SIGNAL_PARAMS = {
     't_r': TR,
     'high_pass': 0.01, # Hz
-    'low_pass': None, # Hz (e.g., 0.1) - Set to None if no low-pass filtering desired
+    'low_pass': None, # Hz
     'detrend': True,
-    'standardize': 'zscore_sample' # Standardize after cleaning
+    'standardize': 'zscore_sample'
 }
 
-# --- Category Definition ---
-# Keywords are matched case-insensitively against the *first* label from synset_words.txt
-POTENTIAL_CATEGORIES = {
-    "Mammals": ['dog', 'cat', 'monkey', 'elephant', 'bear', 'lion', 'zebra', 'mammal', 'primate', 'fox', 'wolf', 'horse', 'pig', 'sheep', 'cow', 'hippo', 'panda', 'koala', 'kangaroo', 'badger', 'otter', 'skunk'],
-    "Birds": ['bird', 'eagle', 'owl', 'parrot', 'penguin', 'swan', 'cock', 'hen', 'finch', 'robin', 'jay', 'magpie', 'kite', 'vulture'],
-    "Tools": ['hammer', 'screwdriver', 'wrench', 'pliers', 'tool', 'saw', 'chisel', 'hatchet', 'drill', 'vise'],
-    "Vehicles": ['car', 'truck', 'bus', 'airplane', 'train', 'vehicle', 'motorcycle', 'boat', 'bicycle', 'scooter', 'van', 'taxi'],
-    "Food": ['apple', 'banana', 'pizza', 'bread', 'food', 'fruit', 'vegetable', 'cake', 'mushroom', 'orange', 'lemon', 'pineapple', 'strawberry', 'fig', 'hotdog', 'pretzel', 'bagel', 'burrito'],
-    "Man-made Structures": ['house', 'building', 'bridge', 'church', 'castle', 'structure', 'tower', 'skyscraper', 'monastery', 'library', 'palace', 'dam', 'barn', 'stupa']
-}
-MIN_SYNSETS_PER_CATEGORY = 5 # Minimum number of unique synsets mapping to a category to keep it
-N_CATEGORIES_TO_USE = 6 # Max number of categories to use if many meet the threshold
-UNCATEGORIZED_NAME = "Other" # Name for items not fitting into selected categories
+# --- Category Definition (Not used in run-level analysis) ---
+# POTENTIAL_CATEGORIES = {...}
+# MIN_SYNSETS_PER_CATEGORY = 5
+# N_CATEGORIES_TO_USE = 6
+# UNCATEGORIZED_NAME = "Other"
 
-# --- Connectivity & Graph Parameters ---
-# Heuristic threshold for connectivity calculation (consider lowering for PoC if needed)
-MIN_VOLUMES_PER_CATEGORY = ATLAS_DIM # Set equal to number of nodes (e.g., 64)
-# Alternative: Set a fixed minimum like 30, but acknowledge lower reliability
-# MIN_VOLUMES_PER_CATEGORY = 30
-
-CONNECTIVITY_KIND = 'correlation' # or 'partial correlation', 'tangent'
-FISHER_Z_TRANSFORM = True # Apply Fisher transform to correlations for GAT edge weights
+# --- Connectivity & Graph Parameters (Run-Level Analysis) ---
+# MIN_VOLUMES_PER_CATEGORY = 32 # Not needed for run-level
+CONNECTIVITY_KIND = 'correlation'
+FISHER_Z_TRANSFORM = True # Apply Fisher transform to run-level correlations
 
 # --- Model & Training Parameters ---
-GAT_HIDDEN_CHANNELS = 16 # Number of features in the hidden layer
-GAT_HEADS = 4 # Number of attention heads
-GAT_DROPOUT = 0.6 # Dropout rate in GAT layer
-LEARNING_RATE = 0.005
-WEIGHT_DECAY = 5e-4 # L2 regularization for Adam optimizer
-N_EPOCHS = 150 # Number of training epochs (adjust based on convergence)
+GAT_HIDDEN_CHANNELS = 32
+GAT_HEADS = 8
+GAT_DROPOUT = 0.3
+LEARNING_RATE = 0.001
+WEIGHT_DECAY = 1e-4
+N_EPOCHS = 300
 
 # --- Explainability Parameters ---
-GNN_EXPLAINER_EPOCHS = 100 # Ensure this is an integer
+# Ensure this is an integer if GNNExplainer is used later
+GNN_EXPLAINER_EPOCHS = 100
 
 # --- Miscellaneous ---
 RANDOM_SEED = 42
@@ -134,19 +130,24 @@ NILEARN_CACHE_DIR = OUTPUT_DIR / 'nilearn_cache'
 # --- Setup Functions ---
 def setup_environment(seed):
     """Set random seeds for reproducibility."""
-    random.seed(seed) 
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+    # print(f"Random seed set to: {seed}") # Moved print to main
 
 def ensure_directories():
     """Create output and cache directories if they don't exist."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     NILEARN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # print(f"Ensured output directory exists: {OUTPUT_DIR}") # Moved print to main
+    # print(f"Ensured Nilearn cache directory exists: {NILEARN_CACHE_DIR}") # Moved print to main
 
 # --- Run Setup on Import ---
-# These will run automatically whenever setup_config is imported
 setup_environment(RANDOM_SEED)
 ensure_directories()
+
+# print("Configuration loaded and environment set up.") # Moved print to main
+# print("-" * 30) # Moved print to main
