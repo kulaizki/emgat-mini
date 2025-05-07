@@ -1,7 +1,3 @@
-# Filename: model_definition.py
-# Location: <workspace_root>/model_definition.py
-# Description: Defines the GAT model architecture for the PoC (Step 9).
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,7 +13,7 @@ class GATClassifier(nn.Module):
     def __init__(self, num_node_features, num_classes):
         super().__init__()
         self.num_node_features = num_node_features
-        self.num_classes = num_classes
+        self.num_classes = num_classes # Represents number of subjects for run-level classification
 
         # First GAT Layer
         self.conv1 = GATConv(num_node_features, 
@@ -92,23 +88,21 @@ class GATClassifier(nn.Module):
         return out_logits, (edge_index_att, alpha)
 
 # --- Function to Instantiate Model ---
-def get_model(num_categories):
+def get_model(num_classes): # Renamed parameter for clarity in run-level context
     """Instantiates the GAT model based on configuration."""
     print("--- Instantiating GAT Model ---")
     num_node_features = ATLAS_DIM # Based on identity features
-    model = GATClassifier(num_node_features=num_node_features, num_classes=num_categories)
+    model = GATClassifier(num_node_features=num_node_features, num_classes=num_classes)
     print(f"  Model Instantiated:")
     print(f"    Input node features: {num_node_features}")
     print(f"    Hidden channels: {GAT_HIDDEN_CHANNELS}")
     print(f"    Attention heads: {GAT_HEADS}")
-    print(f"    Output classes: {num_categories}")
+    print(f"    Output classes (e.g., subjects): {num_classes}")
     # print(model) # Optionally print the full model structure
     return model
 
 # --- Main Execution Function (Example) ---
 if __name__ == "__main__":
-    # Example: Instantiate model assuming 4 categories
-    # In a real workflow, num_categories would come from the loaded mapping data
-    example_num_categories = 4
-    model = get_model(example_num_categories)
+    example_num_subjects = 2
+    model = get_model(example_num_subjects)
     print("\nModel Definition Script Complete.") 

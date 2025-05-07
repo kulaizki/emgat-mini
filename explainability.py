@@ -35,35 +35,36 @@ class ModelWrapper(torch.nn.Module):
 def analyze_attention(model, graph_list, dataset_info):
     """
     Extracts and analyzes attention weights from the trained GAT model
-    for each trial graph in the provided list.
+    for each run graph in the provided list (subject classification context).
 
     Args:
         model (torch.nn.Module): The trained GAT model instance.
-        graph_list (list): List of PyG Data objects (trial-level graphs).
-        dataset_info (dict): Dictionary containing 'num_categories' and 'category_names'.
+        graph_list (list): List of PyG Data objects (run-level graphs).
+        dataset_info (dict): Dictionary containing 'num_classes' (subjects)
+                             and 'class_names' (subject IDs).
 
     Returns:
         dict: Dictionary containing attention results keyed by graph ID, or None.
     """
-    print("--- Analyzing GAT Attention Weights (Trial-Level) ---")
+    print("--- Analyzing GAT Attention Weights (Run-Level Subject Classification) ---")
     if not graph_list or not dataset_info:
         print("  ERROR: Graph list or dataset info not provided. Cannot analyze attention.")
         return None
 
-    category_names = dataset_info.get('category_names', [f'Category {i}' for i in range(dataset_info.get('num_categories',0))])
+    class_names = dataset_info.get('class_names', [f'Subject {i}' for i in range(dataset_info.get('num_classes',0))])
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
     model.eval()
 
     attention_results = {}
-    print(f"  Extracting attention for {len(graph_list)} trial graphs...")
+    print(f"  Extracting attention for {len(graph_list)} run graphs...")
 
     with torch.no_grad():
         for i, graph in enumerate(graph_list):
             graph = graph.to(device)
             try:
-                graph_id = f"Trial_{graph.trial_id}_Sub_{graph.subject}_Ses_{graph.session}_Cat_{graph.category_name}"
+                graph_id = f"Run_{graph.run_id}_Sub_{graph.subject_id}_Ses_{graph.session_id}"
             except AttributeError:
                  graph_id = f"Graph_{i}"
 
@@ -77,9 +78,9 @@ def analyze_attention(model, graph_list, dataset_info):
                      continue
 
                 predicted_class_idx = logits.argmax(dim=1).item()
-                predicted_class_name = category_names[predicted_class_idx] if predicted_class_idx < len(category_names) else "Unknown"
+                predicted_class_name = class_names[predicted_class_idx] if predicted_class_idx < len(class_names) else "UnknownSubject"
                 true_label_idx = graph.y.item()
-                true_class_name = category_names[true_label_idx] if true_label_idx < len(category_names) else "Unknown"
+                true_class_name = class_names[true_label_idx] if true_label_idx < len(class_names) else "UnknownSubject"
 
                 avg_attention = alpha.mean(dim=1).cpu().numpy()
 
@@ -91,9 +92,9 @@ def analyze_attention(model, graph_list, dataset_info):
                     'predicted_label': predicted_class_idx,
                     'true_class_name': true_class_name,
                     'predicted_class_name': predicted_class_name,
-                    'subject': graph.subject if hasattr(graph, 'subject') else 'N/A',
-                    'session': graph.session if hasattr(graph, 'session') else 'N/A',
-                    'trial_id': graph.trial_id if hasattr(graph, 'trial_id') else 'N/A'
+                    'subject': graph.subject_id if hasattr(graph, 'subject_id') else 'N/A',
+                    'session': graph.session_id if hasattr(graph, 'session_id') else 'N/A',
+                    'trial_id': graph.run_id if hasattr(graph, 'run_id') else 'N/A'
                 }
             except Exception as e:
                  print(f"    ERROR during forward pass/attention extraction for {graph_id}: {e}")
@@ -102,7 +103,7 @@ def analyze_attention(model, graph_list, dataset_info):
     successful_extractions = sum(1 for res in attention_results.values() if res is not None)
     print(f"  Extracted attention for {successful_extractions} graphs.")
 
-    attention_save_path = OUTPUT_DIR / "attention_analysis_trial_level.pkl"
+    attention_save_path = OUTPUT_DIR / "attention_analysis_run_level.pkl"
     try:
         with open(attention_save_path, 'wb') as f:
             pickle.dump(attention_results, f)
@@ -121,18 +122,19 @@ def create_graph_batch(graph, batch_size):
 
 def run_gnn_explainer(model, graph_list, dataset_info):
     """
-    Runs GNNExplainer for trial-level category classification.
+    Runs GNNExplainer for run-level subject classification.
     Uses the newer Explainer API if available, otherwise falls back to legacy GNNExplainer.
 
     Args:
         model (torch.nn.Module): The trained GAT model instance.
-        graph_list (list): List of PyG Data objects (trial-level graphs).
-        dataset_info (dict): Dictionary containing 'num_categories' and 'category_names'.
+        graph_list (list): List of PyG Data objects (run-level graphs).
+        dataset_info (dict): Dictionary containing 'num_classes' (subjects)
+                             and 'class_names' (subject IDs).
 
     Returns:
         dict: Dictionary containing explanation results keyed by graph ID, or None.
     """
-    print("--- Running GNNExplainer (Trial-Level) ---")
+    print("--- Running GNNExplainer (Run-Level Subject Classification) ---")
     if GNNExplainerAlgo is None and Explainer is None:
         print("  ERROR: GNNExplainer algorithm not imported. Skipping.")
         return None
@@ -140,8 +142,8 @@ def run_gnn_explainer(model, graph_list, dataset_info):
         print("  ERROR: Graph list or dataset info not provided.")
         return None
 
-    num_categories = dataset_info['num_categories']
-    category_names = dataset_info['category_names']
+    num_classes = dataset_info['num_classes']
+    class_names = dataset_info['class_names']
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.to(device)
@@ -196,12 +198,12 @@ def run_gnn_explainer(model, graph_list, dataset_info):
     effective_batch_size = 4 if has_batchnorm else 1 
     if effective_batch_size > 1 : print(f"  Using batch size {effective_batch_size} for GNNExplainer due to BatchNorm.")
 
-    print(f"  Generating explanations for {len(graph_list)} trial graphs...")
+    print(f"  Generating explanations for {len(graph_list)} run graphs...")
 
     for i, graph_original in enumerate(graph_list):
         graph = graph_original.to(device)
         try:
-            graph_id = f"Trial_{graph.trial_id}_Sub_{graph.subject}_Ses_{graph.session}_Cat_{graph.category_name}"
+            graph_id = f"Run_{graph.run_id}_Sub_{graph.subject_id}_Ses_{graph.session_id}"
         except AttributeError:
             graph_id = f"Graph_{i}"
 
@@ -252,11 +254,11 @@ def run_gnn_explainer(model, graph_list, dataset_info):
                 'edge_mask': edge_mask,
                 'true_label': true_label_idx,
                 'predicted_label': prediction_idx,
-                'true_class_name': category_names[true_label_idx] if true_label_idx < len(category_names) else 'Unknown',
-                'predicted_class_name': category_names[prediction_idx] if prediction_idx < len(category_names) else 'Unknown',
-                'subject': graph.subject if hasattr(graph, 'subject') else 'N/A',
-                'session': graph.session if hasattr(graph, 'session') else 'N/A',
-                'trial_id': graph.trial_id if hasattr(graph, 'trial_id') else 'N/A'
+                'true_class_name': class_names[true_label_idx] if true_label_idx < len(class_names) else 'UnknownSubject',
+                'predicted_class_name': class_names[prediction_idx] if prediction_idx < len(class_names) else 'UnknownSubject',
+                'subject': graph.subject_id if hasattr(graph, 'subject_id') else 'N/A',
+                'session': graph.session_id if hasattr(graph, 'session_id') else 'N/A',
+                'trial_id': graph.run_id if hasattr(graph, 'run_id') else 'N/A'
             }
         except Exception as e:
             print(f"    ERROR during GNNExplainer for {graph_id}: {e}")
@@ -265,7 +267,7 @@ def run_gnn_explainer(model, graph_list, dataset_info):
     successful_explanations = sum(1 for res in explanation_results.values() if res is not None)
     print(f"  Generated GNNExplanations for {successful_explanations} graphs.")
 
-    gnnexplainer_save_path = OUTPUT_DIR / "gnnexplainer_results_trial_level.pkl"
+    gnnexplainer_save_path = OUTPUT_DIR / "gnnexplainer_results_run_level.pkl"
     try:
         with open(gnnexplainer_save_path, 'wb') as f:
             pickle.dump(explanation_results, f)
@@ -277,18 +279,18 @@ def run_gnn_explainer(model, graph_list, dataset_info):
 
 # --- Main Execution Function ---
 if __name__ == "__main__":
-    print("Executing Explainability Pipeline (Trial-Level)...")
+    print("Executing Explainability Pipeline (Run-Level)...")
 
-    # --- Load trial-level graph list, dataset info, and model ---
-    dataset_storage_path = OUTPUT_DIR / 'pyg_trial_level_dataset'
-    list_save_path = dataset_storage_path / 'trial_level_graph_list.pt'
-    info_path = OUTPUT_DIR / "trial_level_dataset_info.pkl"
-    model_path = OUTPUT_DIR / "gat_model_trial_level.pt"
+    # --- Load run-level graph list, dataset info, and model ---
+    dataset_storage_path = OUTPUT_DIR / 'pyg_run_level_dataset'
+    list_save_path = dataset_storage_path / 'run_level_graph_list.pt'
+    info_path = OUTPUT_DIR / "run_level_dataset_info.pkl"
+    model_path = OUTPUT_DIR / "gat_model_run_level.pt"
 
     graph_list = None
     dataset_info = None
     model_state_dict = None
-    actual_num_categories = None
+    actual_num_classes = None
 
     try:
         print(f"Loading graph list from {list_save_path}...")
@@ -298,8 +300,8 @@ if __name__ == "__main__":
 
         with open(info_path, 'rb') as f:
              dataset_info = pickle.load(f)
-             actual_num_categories = dataset_info['num_categories']
-             print(f"Loaded dataset info. Categories: {actual_num_categories}")
+             actual_num_classes = dataset_info['num_classes']
+             print(f"Loaded dataset info. Classes (Subjects): {actual_num_classes}")
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model_state_dict = torch.load(model_path, map_location=device)
@@ -314,7 +316,7 @@ if __name__ == "__main__":
         exit(1)
 
     # --- Instantiate and Load Model ---
-    model = get_model(num_categories=actual_num_categories)
+    model = get_model(num_classes=actual_num_classes)
     model.load_state_dict(model_state_dict)
     model.eval() # Set to eval mode
 
@@ -330,6 +332,6 @@ if __name__ == "__main__":
         if gnn_results:
             print("GNNExplainer completed.")
 
-        print("\nExplainability Pipeline Complete (Trial-Level).")
+        print("\nExplainability Pipeline Complete (Run-Level).")
     else:
         print("\nSkipping explainability due to loading errors or missing components.")

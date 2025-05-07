@@ -514,28 +514,24 @@ def plot_explanation_connectome(graph_id, edge_index, edge_mask, coords, node_la
             # Should not happen if kept_edges > 0, but defensive check
              print("    Warning: No edge weights found for top_n thresholding.")
 
-    # Node plotting arguments
-    node_kwargs = {'node_size': 15, 'node_color': 'black'}
-
     try:
         fig_title = f"{title_prefix}: {graph_id} (|Thr|={threshold:.1f}, Top {top_n})"
         save_path = OUTPUT_DIR / f"{title_prefix}_{graph_id}_connectome.png"
 
+        # Remove node_kwargs and use direct parameters
         plotting.plot_connectome(
             adj_matrix,
             coords,
-            # edge_threshold=threshold, # Thresholding is now done manually above
             edge_vmin= -max_mask if edge_mask_clean.min() < 0 else 0, # Adjust vmin if negative values exist
             edge_vmax= max_mask,
-            node_kwargs=node_kwargs,
+            node_color='black',  # Direct parameter instead of node_kwargs
+            node_size=15,        # Direct parameter instead of node_kwargs
             edge_kwargs={'linewidth': 1.5, 'cmap': 'viridis'},
             display_mode='lzry',
             colorbar=True,
             title=fig_title,
             output_file=str(save_path),
-            annotate=True,
-            node_color=node_kwargs['node_color'],
-            node_size=node_kwargs['node_size']
+            annotate=True
         )
         plt.close()
         print(f"    Saved connectome plot to: {save_path.name}")
@@ -571,27 +567,27 @@ def plot_node_importance(graph_id, node_mask, coords, node_labels=None, threshol
     important_coords = coords[important_nodes_idx]
     important_weights = node_mask_norm[important_nodes_idx] # Keep original (normalized) sign/value for plotting
 
-    # Get labels for important nodes only
-    marker_labels = None
+    # Get labels for important nodes only (but don't pass to plot_markers)
+    marker_labels_list = None
     if node_labels:
         try:
-            marker_labels = [node_labels[i] for i in important_nodes_idx]
+            marker_labels_list = [node_labels[i] for i in important_nodes_idx]
         except IndexError:
              print("    Warning: Index error retrieving node labels. Using default node indices.")
-             marker_labels = [f"Node {i}" for i in important_nodes_idx]
+             marker_labels_list = [f"Node {i}" for i in important_nodes_idx]
         except Exception as e:
              print(f"    Warning: Error retrieving node labels: {e}. Using default node indices.")
-             marker_labels = [f"Node {i}" for i in important_nodes_idx]
+             marker_labels_list = [f"Node {i}" for i in important_nodes_idx]
 
     try:
         fig_title = f"{title_prefix} Node Importance: {graph_id} (|Thr|={threshold:.1f})"
         save_path = OUTPUT_DIR / f"{title_prefix}_{graph_id}_nodes.png"
 
         plotting.plot_markers(
-            node_values=important_weights, # Use original normalized values for color potentially
+            node_values=important_weights,  # Use original normalized values for color potentially
             node_coords=important_coords,
-            node_labels=marker_labels,
-            node_size=np.abs(important_weights) * 30 + 5, # Scale size by *absolute* importance
+            # node_labels removed as it's causing errors with current nilearn version
+            node_size=np.abs(important_weights) * 30 + 5,  # Scale size by *absolute* importance
             node_cmap='viridis',
             # Adjust vmin/vmax based on whether mask has negative values
             node_vmin= -1.0 if node_mask_clean.min() < 0 else 0.0,
@@ -652,10 +648,11 @@ def plot_top_aggregated_nodes(top_indices, top_scores, coords, node_labels, titl
         fig_title = f"Top {len(top_indices)} {title_prefix} ROIs (Aggregated)"
         save_path = OUTPUT_DIR / output_filename
 
-        plotting.plot_markers(
+        # First create the brain markers plot
+        brain_fig = plotting.plot_markers(
             node_values=node_values,
             node_coords=top_coords,
-            node_labels=labels_for_plot,
+            # node_labels removed to match current nilearn API
             node_size=node_sizes,
             node_cmap='viridis', # Or choose another cmap
             node_vmin=vmin,
@@ -663,24 +660,97 @@ def plot_top_aggregated_nodes(top_indices, top_scores, coords, node_labels, titl
             title=fig_title,
             colorbar=True,
             display_mode='lzry',
-            output_file=str(save_path),
+            # Don't save yet - we'll add a legend first
             annotate=True # Show labels
         )
+
+        # Create a custom figure with both brain views and ROI names
+        plt.figure(figsize=(15, 10))
+        
+        # Create a larger figure for our combined plot
+        fig, axes = plt.subplots(2, 1, figsize=(12, 14), gridspec_kw={'height_ratios': [4, 1]})
+        
+        # Close the previous brain plot window as we'll recreate it
+        plt.close(brain_fig)
+        
+        # Replot the brain in the top subplot
+        brain_fig = plotting.plot_markers(
+            node_values=node_values,
+            node_coords=top_coords,
+            node_size=node_sizes,
+            node_cmap='viridis',
+            node_vmin=vmin,
+            node_vmax=vmax,
+            title=fig_title,
+            colorbar=True,
+            display_mode='lzry',
+            axes=axes[0],
+            annotate=True
+        )
+        
+        # Create a table in the bottom subplot with ROI information
+        axes[1].axis('off')  # Hide axes
+        
+        # Create a table with ROI names and their scores
+        table_data = []
+        for i, (idx, score) in enumerate(zip(top_indices, top_scores)):
+            roi_name = labels_for_plot[i]
+            table_data.append([f"{i+1}", f"{idx}", f"{roi_name}", f"{score:.4f}"])
+        
+        table = axes[1].table(
+            cellText=table_data,
+            colLabels=["Rank", "ROI Index", "ROI Name", "Importance Score"],
+            loc='center',
+            cellLoc='center',
+            colWidths=[0.1, 0.1, 0.6, 0.2]
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1, 1.5)  # Adjust table scale for better visibility
+        
+        # Add a title for the table
+        axes[1].set_title("Top ROIs Details", pad=20)
+        
+        plt.tight_layout()
+        
+        # Save the combined figure
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
-        print(f"  Saved top aggregated nodes plot to: {save_path.name}")
+        
+        print(f"  Saved top aggregated nodes plot with ROI labels to: {save_path.name}")
 
     except Exception as e:
         print(f"  ERROR plotting top aggregated nodes: {e}")
+        # Attempt fallback to original method without labels
+        try:
+            save_path = OUTPUT_DIR / output_filename
+            brain_fig = plotting.plot_markers(
+                node_values=node_values,
+                node_coords=top_coords,
+                node_size=node_sizes,
+                node_cmap='viridis',
+                node_vmin=vmin,
+                node_vmax=vmax,
+                title=fig_title,
+                colorbar=True,
+                display_mode='lzry',
+                output_file=str(save_path),
+                annotate=True
+            )
+            plt.close(brain_fig)
+            print(f"  Used fallback method - saved basic top aggregated nodes plot to: {save_path.name}")
+        except Exception as fallback_e:
+            print(f"  ERROR in fallback plot: {fallback_e}")
 
 # --- Main Execution Function ---
 def run_visualization(attention_results, gnn_results):
     """
-    Visualizes attention weights and GNNExplainer results for trial-level category classification.
-    Generates connectome plots, node importance plots for a subset of trials,
-    and identifies top ROIs based on average GNNExplainer importance across visualized trials.
+    Visualizes attention weights and GNNExplainer results for run-level subject classification.
+    Generates connectome plots, node importance plots for a subset of runs/graphs,
+    and identifies top ROIs based on average GNNExplainer importance across visualized graphs.
     Queries Gemini for interpretation of the top ROIs.
     """
-    print("--- Running Visualization Pipeline (Step 15) ---")
+    print("--- Running Visualization Pipeline (Run-Level Subject Classification) ---")
 
     # --- Configure Gemini API ---
     print("--- Configuring External APIs ---")

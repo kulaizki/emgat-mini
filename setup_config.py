@@ -1,25 +1,9 @@
-# Filename: setup_config.py
-# Location: <workspace_root>/setup_config.py
-# Description: Defines configuration variables and parameters for the PoC.
-# Changes:
-#   - Updated DiFuMo Labels/Coordinates CSV Configuration section with
-#     correct column names based on user-provided CSV header.
-#   - Set coordinate columns to None as they are not in the CSV.
-
 import os
-# import glob # Not used directly
-# import re # Not used directly
-# import pickle # Not used directly
 from pathlib import Path
 import warnings
-import random # Added for seed setting
-
+import random 
 import numpy as np
 import pandas as pd
-# Note: Importing heavy libraries like nibabel, nilearn, torch here might slow down
-# simple script executions that only need config values. Consider importing them
-# only within the modules that strictly need them if startup time becomes an issue.
-# However, for simplicity in the PoC, keeping them here is often acceptable.
 import nibabel as nib
 from nilearn import image, plotting, datasets, signal
 from nilearn.maskers import NiftiMapsMasker
@@ -30,11 +14,8 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 import torch
 import torch.nn as nn
 import torch.optim as optim
-# Note: Importing specific PyG items here might be okay if used frequently across modules
-# or moved to individual modules if preferred.
 from torch_geometric.data import Data, Dataset, DataLoader
 from torch_geometric.nn import GATConv, global_mean_pool
-# from torch_geometric.explain import GNNExplainer # Moved to explainability.py potentially
 import torch.nn.functional as F
 
 import matplotlib.pyplot as plt
@@ -47,7 +28,7 @@ except:
 FMRIPREP_DIR = Path("./data/ds004496/derivatives/fmriprep")
 BIDS_RAW_DIR = Path("./data/ds004496/raw")
 OUTPUT_DIR = Path("./output")
-SYNSET_WORDS_FILE = Path("./data/ds004496/synset_words.txt") # Needed only for original category mapping
+SYNSET_WORDS_FILE = Path("./data/ds004496/synset_words.txt") 
 
 # --- Atlas Configuration ---
 ATLAS_DIM = 64
@@ -55,24 +36,18 @@ ATLAS_NAME = f"difumo{ATLAS_DIM}"
 ATLAS_RESOLUTION_MM = 2
 
 # --- DiFuMo Labels/Coordinates CSV Configuration ---
-# Path to the CSV file containing labels and potentially coordinates
-DIFUMO_LABELS_FILE = Path("./labels_64_dictionary.csv") # Confirmed path
-
-# --- Column Names in DIFUMO_LABELS_FILE (Updated based on user CSV) ---
+DIFUMO_LABELS_FILE = Path("./labels_64_dictionary.csv") 
 
 # Name of the column containing the component index (0-based or 1-based)
-# Found 'Component' in user CSV (appears 1-based)
 DIFUMO_LABEL_INDEX_COL = "Component"
 
 # Name of the column containing the human-readable region name
-# Found 'Difumo_names' in user CSV
 DIFUMO_LABEL_NAME_COL = "Difumo_names"
 
 # Names of columns containing MNI coordinates.
-# Set to None because coordinate columns were NOT found in user CSV data.
-DIFUMO_COORD_X_COL = None
-DIFUMO_COORD_Y_COL = None
-DIFUMO_COORD_Z_COL = None
+DIFUMO_COORD_X_COL = 'x_mni'
+DIFUMO_COORD_Y_COL = 'y_mni'
+DIFUMO_COORD_Z_COL = 'z_mni'
 # --- End DiFuMo CSV Configuration ---
 
 # --- Data Selection (Run-Level Analysis) ---
@@ -91,7 +66,7 @@ CONFOUNDS_TO_USE = [
     'csf', 'white_matter',
     'cosine00', 'cosine01', 'cosine02', 'cosine03',
 ]
-FD_THRESHOLD = 0.5 # Not currently used in cleaning logic
+FD_THRESHOLD = 0.5 
 CLEAN_SIGNAL_PARAMS = {
     't_r': TR,
     'high_pass': 0.01, # Hz
@@ -99,12 +74,6 @@ CLEAN_SIGNAL_PARAMS = {
     'detrend': True,
     'standardize': 'zscore_sample'
 }
-
-# --- Category Definition (Not used in run-level analysis) ---
-# POTENTIAL_CATEGORIES = {...}
-# MIN_SYNSETS_PER_CATEGORY = 5
-# N_CATEGORIES_TO_USE = 6
-# UNCATEGORIZED_NAME = "Other"
 
 # --- Connectivity & Graph Parameters (Run-Level Analysis) ---
 # MIN_VOLUMES_PER_CATEGORY = 32 # Not needed for run-level

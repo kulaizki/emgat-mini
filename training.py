@@ -1,33 +1,20 @@
-# Filename: training.py
-# Location: <workspace_root>/training.py
-# Description: Implements the GAT model training loop (Step 10) and plots history
-#              for the RUN-LEVEL subject classification task.
-# Changes:
-#  - Loads graph list saved by graph_construction.py instead of Dataset object.
-#  - Loads run_level_dataset_info.pkl to get actual class count (2).
-#  - Instantiates model with correct number of classes.
-#  - train_model accepts and iterates through the graph list.
-
 import torch
 import torch.optim as optim
-import torch.nn.functional as F # Often needed, though maybe not explicitly here
+import torch.nn.functional as F 
 from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 import pickle
-from pathlib import Path # Added
+from pathlib import Path 
 import numpy as np
-from torch_geometric.loader import DataLoader # Import DataLoader
+from torch_geometric.loader import DataLoader 
 
-# Import configuration and model definition
 from setup_config import (
-    OUTPUT_DIR, LEARNING_RATE, WEIGHT_DECAY, N_EPOCHS, RANDOM_SEED # Add RANDOM_SEED
+    OUTPUT_DIR, LEARNING_RATE, WEIGHT_DECAY, N_EPOCHS, RANDOM_SEED 
 )
-# Removed graph_construction import as we load list directly
-# from graph_construction import ConnectivityDataset
 from model_definition import get_model
 
 
-def train_model(model, graph_list, batch_size=8): # Added batch_size argument
+def train_model(model, graph_list, batch_size=8): 
     """
     Trains the GAT model using DataLoader for batching.
 
@@ -50,7 +37,6 @@ def train_model(model, graph_list, batch_size=8): # Added batch_size argument
 
     # --- Verify Model Output Size vs Data Labels ---
     try:
-        # Updated to access the last layer of the model's output_mlp
         model_output_classes = model.output_mlp[-1].out_features
         # Check against maximum label value + 1 in the dataset list
         max_label_in_data = -1
@@ -59,7 +45,6 @@ def train_model(model, graph_list, batch_size=8): # Added batch_size argument
         expected_classes_from_data = max_label_in_data + 1
 
         if model_output_classes != expected_classes_from_data:
-             # This check might still trigger if model is 2-class but data has only 1 class (unlikely but possible)
              print(f"  WARNING: Model output layer size ({model_output_classes}) might not match "
                    f"expected classes based on dataset labels ({expected_classes_from_data}).")
         else:
@@ -87,7 +72,7 @@ def train_model(model, graph_list, batch_size=8): # Added batch_size argument
     print(f"  Data split: {len(train_graphs)} training graphs, {len(val_graphs)} validation graphs")
 
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    # Add learning rate scheduler for better convergence - removed verbose parameter for compatibility
+    # Add learning rate scheduler for better convergence 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5,
                                                     patience=20)
     criterion = torch.nn.CrossEntropyLoss()
@@ -339,8 +324,8 @@ if __name__ == "__main__":
          print("ERROR: Failed to load valid graph list or dataset info.")
          exit()
 
-    # Instantiate the model using the ACTUAL number of classes
-    model = get_model(num_categories=actual_num_classes)
+    # Instantiate the model using the ACTUAL number of classes (subjects)
+    model = get_model(num_classes=actual_num_classes)
     if model is None:
         print("ERROR: Failed to instantiate model. Exiting.")
         exit()

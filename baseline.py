@@ -6,62 +6,68 @@ from sklearn.exceptions import UndefinedMetricWarning
 import warnings
 from pathlib import Path
 
-# Import configuration variables
 from setup_config import (
     OUTPUT_DIR, RANDOM_SEED # Added RANDOM_SEED for consistency
 )
 
-def run_svm_baseline(trial_data_dict, dataset_info):
+def run_svm_baseline(run_connectivity_matrices, dataset_info):
     """
-    Trains and evaluates an SVM on flattened trial-level connectivity matrices
-    for visual object category classification.
+    Trains and evaluates an SVM on flattened run-level connectivity matrices
+    for subject classification.
 
     Args:
-        trial_data_dict (dict): Nested dict {sub: {ses: [trial_info]}} from data_prep.
-        dataset_info (dict): Dictionary containing 'num_categories'
-                             and 'category_names'.
+        run_connectivity_matrices (dict): Nested dict {sub: {ses: {run: matrix}}} from data_prep.
+        dataset_info (dict): Dictionary containing 'num_classes' (number of subjects)
+                             and 'class_names' (subject IDs).
 
     Returns:
         tuple: (accuracy, report_string) or (None, None) on failure.
     """
-    print("--- Running Baseline SVM Classifier (Trial-Level Category Classification) ---")
-    if not trial_data_dict or not dataset_info:
-        print("  ERROR: Missing trial data dictionary or dataset info. Cannot run baseline.")
+    print("--- Running Baseline SVM Classifier (Run-Level Subject Classification) ---")
+    if not run_connectivity_matrices or not dataset_info:
+        print("  ERROR: Missing run connectivity matrices or dataset info. Cannot run baseline.")
         return None, None
 
-    if 'num_categories' not in dataset_info or 'category_names' not in dataset_info:
-        print("  ERROR: Dataset info incomplete. Missing 'num_categories' or 'category_names'.")
+    if 'num_classes' not in dataset_info or 'class_names' not in dataset_info:
+        print("  ERROR: Dataset info incomplete. Missing 'num_classes' or 'class_names'.")
         return None, None
 
-    num_categories = dataset_info['num_categories']
-    category_names = dataset_info['category_names']
-    report_labels = list(range(num_categories))
+    num_classes = dataset_info['num_classes']
+    class_names = dataset_info['class_names'] # These are subject IDs
+    report_labels = list(range(num_classes))
+    subject_to_index = {sub_id: i for i, sub_id in enumerate(class_names)}
 
     features = []
     labels = []
 
-    # Prepare feature matrix (X) and label vector (y) from trial-level data
-    print("  Preparing features and labels from trial data...")
-    skipped_trials = 0
-    for sub, sessions in trial_data_dict.items():
-        for ses, trials in sessions.items():
-            for trial_info in trials:
-                matrix = trial_info.get('connectivity')
-                category_index = trial_info.get('category_label_index')
+    # Prepare feature matrix (X) and label vector (y) from run-level data
+    print("  Preparing features and labels from run data...")
+    skipped_runs = 0
+    processed_runs = 0
+    for sub_id, sessions in run_connectivity_matrices.items():
+        if sub_id not in subject_to_index:
+            print(f"    Warning: Subject ID {sub_id} from data not in configured class_names (subject IDs). Skipping their runs.")
+            skipped_runs += sum(len(runs) for runs in sessions.values())
+            continue
+        
+        subject_label_index = subject_to_index[sub_id]
 
-                if matrix is not None and category_index is not None:
-                    # Use the full flattened matrix
+        for ses_id, runs in sessions.items():
+            for run_id, matrix in runs.items():
+                processed_runs +=1
+                if matrix is not None:
                     flat_features = matrix.flatten()
                     features.append(flat_features)
-                    labels.append(category_index) # Use category index as label
+                    labels.append(subject_label_index) # Use subject index as label
                 else:
-                    skipped_trials += 1
+                    print(f"    Skipping run {sub_id}/{ses_id}/{run_id} due to missing connectivity matrix.")
+                    skipped_runs += 1
 
-    if skipped_trials > 0:
-        print(f"    Skipped {skipped_trials} trials due to missing connectivity or category index.")
+    if skipped_runs > 0:
+        print(f"    Skipped {skipped_runs} runs out of {processed_runs} processed runs due to missing data or unknown subject.")
 
     if not features:
-        print("  ERROR: No valid feature vectors created for baseline. Check trial data.")
+        print("  ERROR: No valid feature vectors created for baseline. Check run connectivity data.")
         return None, None
 
     X = np.array(features)
@@ -105,7 +111,8 @@ def run_svm_baseline(trial_data_dict, dataset_info):
         warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
         # Check labels found vs expected
         labels_present = sorted(np.unique(y).tolist())
-        target_names_present = [category_names[i] for i in labels_present if i < len(category_names)]
+        # Use class_names (subject_ids) for target names
+        target_names_present = [class_names[i] for i in labels_present if i < len(class_names)]
 
         report = classification_report(y, y, # Using y vs y to get report structure for present classes
                                        labels=labels_present,
@@ -119,7 +126,7 @@ def run_svm_baseline(trial_data_dict, dataset_info):
 
     print("--- Baseline SVM Results ---")
     print(f"  Accuracy: {accuracy:.4f}")
-    print("  Classification Report (for classes present in data):")
+    print("  Classification Report (for subjects present in data):")
     print(report)
 
     baseline_results = {
@@ -128,7 +135,7 @@ def run_svm_baseline(trial_data_dict, dataset_info):
     }
 
     # Save results
-    baseline_results_path = OUTPUT_DIR / "baseline_svm_trial_level_results.pkl" # Updated filename
+    baseline_results_path = OUTPUT_DIR / "baseline_svm_run_level_results.pkl" # Updated filename
     try:
         with open(baseline_results_path, 'wb') as f:
             pickle.dump(baseline_results, f)
@@ -141,21 +148,21 @@ def run_svm_baseline(trial_data_dict, dataset_info):
 
 # --- Main Execution Function (Updated for Trial-Level) ---
 if __name__ == "__main__":
-    print("Executing Baseline SVM Pipeline (Trial-Level)...")
+    print("Executing Baseline SVM Pipeline (Run-Level)...")
 
-    # Load trial-level data dictionary and dataset info
-    trial_data_path = OUTPUT_DIR / "trial_level_data.pkl" # Updated path
-    info_path = OUTPUT_DIR / "trial_level_dataset_info.pkl" # Updated path
+    # Load run-level data dictionary and dataset info
+    run_data_path = OUTPUT_DIR / "run_level_connectivity_matrices.pkl" 
+    info_path = OUTPUT_DIR / "run_level_dataset_info.pkl" 
 
-    trial_data_dict = None
-    dataset_info = None
+    run_connectivity_matrices_loaded = None
+    dataset_info_loaded = None
 
     try:
-        with open(trial_data_path, 'rb') as f:
-            trial_data_dict = pickle.load(f)
+        with open(run_data_path, 'rb') as f:
+            run_connectivity_matrices_loaded = pickle.load(f)
         with open(info_path, 'rb') as f:
-             dataset_info = pickle.load(f)
-        print("Loaded trial-level data dictionary and dataset info.")
+             dataset_info_loaded = pickle.load(f)
+        print("Loaded run-level connectivity matrices and dataset info.")
 
     except FileNotFoundError as e:
         print(f"ERROR: Cannot find required input file: {e.filename}")
@@ -166,7 +173,7 @@ if __name__ == "__main__":
         exit(1)
 
     # Run baseline
-    svm_accuracy, svm_report = run_svm_baseline(trial_data_dict, dataset_info)
+    svm_accuracy, svm_report = run_svm_baseline(run_connectivity_matrices_loaded, dataset_info_loaded)
 
     if svm_accuracy is not None:
         print("\nBaseline SVM Pipeline Complete.")

@@ -1,15 +1,9 @@
-# Filename: robustness.py
-# Location: <workspace_root>/robustness.py
-# Description: Optional Step 12 - Checks stability of GNNExplainer results across
-#              different training runs (seeds) for TRIAL-LEVEL category classification.
-
 import torch
 import numpy as np
 import pickle
 import random
 from pathlib import Path
 
-# Import relevant functions from other scripts
 from setup_config import OUTPUT_DIR, setup_environment, RANDOM_SEED
 from model_definition import get_model
 from training import train_model
@@ -20,27 +14,27 @@ N_ROBUSTNESS_RUNS = 3 # Number of different seeds to try (including the original
 def run_robustness_check(graph_list, dataset_info):
     """
     Performs robustness check by training/explaining with multiple seeds for
-    trial-level category classification.
+    run-level subject classification.
 
     Args:
-        graph_list (list): List of PyG Data objects (trial-level graphs).
-        dataset_info (dict): Dictionary containing 'num_categories' and 'category_names'.
+        graph_list (list): List of PyG Data objects (run-level graphs).
+        dataset_info (dict): Dictionary containing 'num_classes' (subjects)
+                             and 'class_names' (subject IDs).
 
     Returns:
         dict: Dictionary containing explanation results keyed by seed, or None.
     """
-    print(f"--- Running Robustness Check (Trial-Level) with {N_ROBUSTNESS_RUNS} seeds ---")
     if not graph_list or not dataset_info:
         print("  ERROR: Graph list or dataset info not provided. Cannot run check.")
         return None
 
     try:
-        actual_num_categories = dataset_info['num_categories']
-        if actual_num_categories < 1:
-            print(f"  ERROR: Invalid 'num_categories' ({actual_num_categories}) in dataset_info. Need >= 1.")
+        actual_num_classes = dataset_info['num_classes']
+        if actual_num_classes < 1:
+            print(f"  ERROR: Invalid 'num_classes' ({actual_num_classes}) in dataset_info. Need >= 1.")
             return None
     except KeyError:
-        print("  ERROR: 'num_categories' not found in dataset_info.")
+        print("  ERROR: 'num_classes' not found in dataset_info.")
         return None
 
     original_seed = RANDOM_SEED
@@ -58,12 +52,12 @@ def run_robustness_check(graph_list, dataset_info):
 
         setup_environment(seed)
 
-        model = get_model(num_categories=actual_num_categories)
+        model = get_model(num_classes=actual_num_classes)
         if model is None:
              print(f"  ERROR: Failed to get model for seed {seed}. Skipping run.")
              continue
 
-        print("  Re-training model for current seed...")
+        print("  Re-training model for current seed (subject classification)...")
         trained_model, _ = train_model(model, graph_list)
         if trained_model is None:
             print(f"  ERROR: Training failed for seed {seed}. Skipping explanation.")
@@ -78,7 +72,7 @@ def run_robustness_check(graph_list, dataset_info):
             all_explanation_results[seed] = None
 
     print("\n--- Robustness Check Complete ---")
-    robustness_save_path = OUTPUT_DIR / "robustness_check_results_trial_level.pkl"
+    robustness_save_path = OUTPUT_DIR / "robustness_check_results_run_level.pkl"
     try:
         with open(robustness_save_path, 'wb') as f:
             pickle.dump(all_explanation_results, f)
@@ -158,14 +152,14 @@ def compare_explanations(all_explanations):
     print("  (Note: High correlation suggests similar important edges identified across runs)")
 
 
-# --- Main Execution Function (Updated for Trial-Level) ---
+# --- Main Execution Function (Updated for Run-Level) ---
 if __name__ == "__main__":
-    print("Executing Robustness Check Pipeline (Trial-Level)...")
+    print("Executing Robustness Check Pipeline (Run-Level)...")
 
-    # --- Load trial-level graph list and dataset info ---
-    dataset_storage_path = OUTPUT_DIR / 'pyg_trial_level_dataset'
-    list_save_path = dataset_storage_path / 'trial_level_graph_list.pt'
-    info_path = OUTPUT_DIR / "trial_level_dataset_info.pkl"
+    # --- Load run-level graph list and dataset info ---
+    dataset_storage_path = OUTPUT_DIR / 'pyg_run_level_dataset'
+    list_save_path = dataset_storage_path / 'run_level_graph_list.pt'
+    info_path = OUTPUT_DIR / "run_level_dataset_info.pkl"
 
     graph_list = None
     dataset_info = None
@@ -178,7 +172,7 @@ if __name__ == "__main__":
 
         with open(info_path, 'rb') as f:
              dataset_info = pickle.load(f)
-             print(f"Loaded dataset info. Categories: {dataset_info.get('num_categories')}, Names: {dataset_info.get('category_names')}")
+             print(f"Loaded dataset info. Classes (Subjects): {dataset_info.get('num_classes')}, Names (Subject IDs): {dataset_info.get('class_names')}")
 
     except FileNotFoundError as e:
         print(f"ERROR: Cannot find required input file: {e.filename}. Please run previous steps.")
@@ -187,13 +181,13 @@ if __name__ == "__main__":
         print(f"ERROR loading files: {e}")
         exit(1)
 
-    if not graph_list or not dataset_info or 'num_categories' not in dataset_info:
+    if not graph_list or not dataset_info or 'num_classes' not in dataset_info:
         print("Exiting due to missing or incomplete data.")
         exit(1)
 
     robustness_results = run_robustness_check(graph_list, dataset_info)
 
     if robustness_results:
-        print("\nRobustness Check Pipeline Complete (Trial-Level).")
+        print("\nRobustness Check Pipeline Complete (Run-Level).")
     else:
-        print("\nRobustness Check Pipeline Failed or produced no results (Trial-Level).")
+        print("\nRobustness Check Pipeline Failed or produced no results (Run-Level).")
